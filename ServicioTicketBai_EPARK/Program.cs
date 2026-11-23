@@ -1,5 +1,9 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.ServiceProcess;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace ServicioTicketBai_EPARK
 {
@@ -10,21 +14,6 @@ namespace ServicioTicketBai_EPARK
         /// </summary>
         static int Main(string[] args)
         {
-#if DEBUG
-            bool simularRechazo = Array.Exists(args, arg => arg == "--simular-rechazo");
-            if (Environment.UserInteractive || simularRechazo || Array.Exists(args, arg => arg == "--simular"))
-            {
-                try
-                {
-                    return TicketBai_EPARK.EjecutarSimulacion(simularRechazo);
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine(ex);
-                    return 1;
-                }
-            }
-#endif
             ServiceBase.Run(new TicketBai_EPARK());
             return 0;
         }

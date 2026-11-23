@@ -30,7 +30,6 @@ namespace ServicioTicketBai_EPARK
         readonly string token;
         readonly Uri URI;
         readonly Uri URIRemesa;
-        readonly SimulacionTicketBai simulacion;
         //install servicio
         internal static ServiceHost hostService = null;
 
@@ -49,31 +48,6 @@ namespace ServicioTicketBai_EPARK
             URI = new Uri(url);
             URIRemesa = new Uri(urlRemesa);
             timer1.Interval = intervalo;
-        }
-
-        private TicketBai_EPARK(SimulacionTicketBai simulacion)
-        {
-            this.simulacion = simulacion;
-            maxIntentos = LimitePredeterminado;
-        }
-
-        internal static int EjecutarSimulacion(bool rechazar)
-        {
-            var simulacion = new SimulacionTicketBai(rechazar);
-            using (var servicio = new TicketBai_EPARK(simulacion))
-            {
-                Console.WriteLine("Simulación TicketBAI. Lectura, envío y guardado en memoria.");
-                if (rechazar)
-                {
-                    for (int ciclo = 0; ciclo <= servicio.maxIntentos; ciclo++)
-                        servicio.ProcesarPendientes(simulacion.DamePendientes(), simulacion);
-                    return simulacion.Estado == 77 && simulacion.Intentos == servicio.maxIntentos ? 0 : 1;
-                }
-
-                int enviados = servicio.ProcesarPendientes(simulacion.DamePendientes(), simulacion);
-                Console.WriteLine("Tickets procesados correctamente: " + enviados);
-                return enviados == 1 ? 0 : 1;
-            }
         }
 
         protected override void OnStart(string[] args)
@@ -135,36 +109,28 @@ namespace ServicioTicketBai_EPARK
             }
         }
 
-        private int ProcesarPendientes(TicketBai[] pendientes, IRegistroEnviosTicketBai registro)
+        private void ProcesarPendientes(TicketBai[] pendientes, ControlEnviosTicketBai control)
         {
             if (pendientes == null)
-                return 0;
+                return;
 
-            int enviados = 0;
             foreach (TicketBai pendiente in pendientes)
             {
-                if (EnviarTicketBai(pendiente, registro))
-                    enviados++;
-                else
-                    RegistrarEvento("No se ha podido generar TicketBai de la Factura: " + pendiente.Factura, EventLogEntryType.Warning);
+                if (!EnviarTicketBai(pendiente, control))
+                    EventLog.WriteEntry("No se ha podido generar TicketBai de la Factura: " + pendiente.Factura, EventLogEntryType.Warning);
             }
-            return enviados;
         }
 
-        private bool EnviarTicketBai(TicketBai documento, IRegistroEnviosTicketBai registro)
+        private bool EnviarTicketBai(TicketBai documento, ControlEnviosTicketBai control)
         {
-            if (simulacion != null && documento.Tipo != "T")
-                throw new InvalidOperationException("La simulación admite tickets simplificados.");
-
             if (documento.Tipo == "T")
             {
-                TicketCompleto ticket = simulacion == null
-                    ? new Ticket().DameTicketCompleto(new NumeroDocumento(documento.Ejercicio, documento.Serie, documento.Factura))
-                    : simulacion.DameTicketCompleto();
+                var numero = new NumeroDocumento(documento.Ejercicio, documento.Serie, documento.Factura);
+                TicketCompleto ticket = new Ticket().DameTicketCompleto(numero);
                 if (ticket == null)
                     return false;
 
-                return EnviarDocumento(documento, ComponerTicketTicketBai(ticket), URI, registro);
+                return EnviarDocumento(documento, ComponerTicketTicketBai(ticket), URI, control);
             }
 
             if (documento.Tipo != "F")
@@ -175,17 +141,17 @@ namespace ServicioTicketBai_EPARK
                 return false;
 
             return documento.Remesa
-                ? EnviarDocumento(documento, ComponerFacturaTicketBaiRemesa(factura), URIRemesa, registro)
-                : EnviarDocumento(documento, ComponerFacturaTicketBai(factura), URI, registro);
+                ? EnviarDocumento(documento, ComponerFacturaTicketBaiRemesa(factura), URIRemesa, control)
+                : EnviarDocumento(documento, ComponerFacturaTicketBai(factura), URI, control);
         }
 
-        private bool EnviarDocumento(TicketBai documento, object datos, Uri destino, IRegistroEnviosTicketBai registro)
+        private bool EnviarDocumento(TicketBai documento, object datos, Uri destino, ControlEnviosTicketBai control)
         {
             if (datos == null)
                 return false;
 
             byte[] json = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(datos));
-            if (!registro.RegistrarIntento(documento, maxIntentos))
+            if (!control.RegistrarIntento(documento, maxIntentos))
                 return false;
 
             string motivo;
@@ -213,7 +179,7 @@ namespace ServicioTicketBai_EPARK
                     string firma = (string)contenido?["huella_tbai"];
                     if (string.IsNullOrWhiteSpace(qr) || string.IsNullOrWhiteSpace(firma))
                         motivo = "La respuesta de TicketBAI no contiene el QR o la firma.";
-                    else if (registro.GuardarEnvio(documento, qr, firma))
+                    else if (control.GuardarEnvio(documento, qr, firma))
                         return true;
                     else
                         motivo = "TicketBAI devolvió el QR y la firma, pero no se pudo confirmar el envío en SQL Server.";
@@ -234,15 +200,12 @@ namespace ServicioTicketBai_EPARK
                 motivo = ex.Message;
             }
 
-            registro.GuardarFallo(documento, motivo, maxIntentos);
+            control.GuardarFallo(documento, motivo, maxIntentos);
             return false;
         }
 
         private Uri CrearConsultaDocumento(TicketBai documento)
         {
-            if (simulacion != null)
-                return null;
-
             var consulta = new UriBuilder(URI);
             string parametros = "serie=" + Uri.EscapeDataString(documento.Serie)
                 + "&numero=" + documento.Factura.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -305,7 +268,7 @@ namespace ServicioTicketBai_EPARK
                 }
                 catch (Exception ex)
                 {
-                    RegistrarEvento("No se pudo completar el aviso de TicketBAI. Queda pendiente: " + ex.Message,
+                    EventLog.WriteEntry("No se pudo completar el aviso de TicketBAI. Queda pendiente: " + ex.Message,
                         EventLogEntryType.Error);
                     return;
                 }
@@ -340,7 +303,7 @@ namespace ServicioTicketBai_EPARK
                 {
                     descripcion = "Servicio Parking",
                     cantidad = 1,
-                    importe_unitario = tc.Cabecera.BaseImponible , // e.Lineas[1].BaseImponible,
+                    importe_unitario = tc.Cabecera.BaseImponible, // e.Lineas[1].BaseImponible,
                     tipo_iva = tc.Cabecera.TantoIVA, //e.Lineas[1].TantoIVA,
                     tipo_req = 0,
                 };
@@ -385,12 +348,12 @@ namespace ServicioTicketBai_EPARK
                 {
                     //es operador
                     RespuestaOperador rop = new RespuestaOperador();
-                   // EscribirLog("Operador: " + e.Cabecera.IDCliente.ToString());
+                    // EscribirLog("Operador: " + e.Cabecera.IDCliente.ToString());
                     Operador ope = new Operador
                     {
                         Id = (int)e.Cabecera.IDCliente
                     };
-                   
+
                     rop = ope.DameOperador();
                     //EscribirLog("resultado DameOperador: " + rop.Resultado.ToString() + "del Operador: " + ope.Id.ToString());
                     if (rop.Resultado)
@@ -408,7 +371,7 @@ namespace ServicioTicketBai_EPARK
                         {
                             retorno.pais_cliente = "ES";
                         }
-                        
+
                     }
                     else
                     {
@@ -475,9 +438,9 @@ namespace ServicioTicketBai_EPARK
                 retorno.intracomunitaria = false;
                 retorno.exportacion = false;
                 //faltan las simplicadas
-              
+
                 Simplificada[] lineas = new Simplificada[e.Lineas.Count()];
-             
+
                 for (int i = 0; i < e.Lineas.Count(); i++)
                 {
                     //EscribirLog("He entrado el valor de i es igual a " + i.ToString());
@@ -508,14 +471,14 @@ namespace ServicioTicketBai_EPARK
                 //primero las lineas
                 LineasFacturaTicketBai[] lineas = new LineasFacturaTicketBai[1];
 
-                
+
 
                 LineasFacturaTicketBai n = new LineasFacturaTicketBai
                 {
                     descripcion = "Servicio Parking",
                     cantidad = 1,
                     importe_unitario = e.Cabecera.BaseImponible, // e.Lineas[1].BaseImponible,
-                    tipo_iva = e.Cabecera.TantoIVA , //e.Lineas[1].TantoIVA,
+                    tipo_iva = e.Cabecera.TantoIVA, //e.Lineas[1].TantoIVA,
                     tipo_req = 0,
                 };
                 lineas[0] = n;
@@ -534,13 +497,14 @@ namespace ServicioTicketBai_EPARK
                 retorno.direccion = "";
                 retorno.cp = "";
                 retorno.pais_cliente = "";
-                if (e.Cabecera.TipoCliente == "O"){
+                if (e.Cabecera.TipoCliente == "O")
+                {
                     //es operador
                     RespuestaOperador rop = new RespuestaOperador();
                     //EscribirLog("Operador: " + e.Cabecera.IDCliente.ToString());
                     Operador ope = new Operador(Convert.ToInt32(e.Cabecera.IDCliente));
                     rop = ope.DameOperador();
-                   // EscribirLog("resultado DameOperador: " + rop.Resultado.ToString());
+                    // EscribirLog("resultado DameOperador: " + rop.Resultado.ToString());
                     if (rop.Resultado)
                     {
                         retorno.nombre = rop.Operador.NombreFiscal;
@@ -589,7 +553,8 @@ namespace ServicioTicketBai_EPARK
                         //eventlog
                         EscribirLog("[ComponerFacturaTicketBai] Error al componer la Factura:" + e.Cabecera.Numero.ToString() + "Datos Empresa");
                     }
-                }else
+                }
+                else
                 {
                     // es particular
                     Cliente cli = new Cliente();
@@ -617,7 +582,7 @@ namespace ServicioTicketBai_EPARK
                     }
                 }
 
-                retorno.serie =e.Cabecera.Serie ;
+                retorno.serie = e.Cabecera.Serie;
                 retorno.numero = e.Cabecera.Numero.ToString();
                 retorno.rectificativa = false;
                 retorno.tipo_operacion = "servicios";
@@ -746,9 +711,6 @@ namespace ServicioTicketBai_EPARK
         }
         private string SendRequest(Uri uri, Byte[] jsonDataBytes, string contentType, string method)
         {
-            if (simulacion != null)
-                return simulacion.Responder(jsonDataBytes);
-
             string response = "";
             WebRequest request;
 
@@ -793,22 +755,8 @@ namespace ServicioTicketBai_EPARK
         }
         private void EscribirLog(string texto)
         {
-            if (simulacion != null)
-            {
-                Console.Error.WriteLine(texto);
-                return;
-            }
-
             String strFile = String.Format(@"C:\GestPark\LOGS\Ticketbai_EPARK_Log_{0:dd-MM-yyyy}.txt", DateTime.Now);
             File.AppendAllText(strFile, String.Format("{0} : {1}" + System.Environment.NewLine, DateTime.Now, texto));
-        }
-
-        private void RegistrarEvento(string texto, EventLogEntryType tipo)
-        {
-            if (simulacion == null)
-                EventLog.WriteEntry(texto, tipo);
-            else
-                Console.Error.WriteLine(texto);
         }
     }
 }
