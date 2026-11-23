@@ -282,6 +282,7 @@ namespace ServicioTicketBai_EPARK
             using (var mensaje = new MailMessage())
             using (var smtp = new SmtpClient())
             {
+                ConfigurarSmtp(smtp, mensaje);
                 mensaje.To.Add(destinatarios);
                 mensaje.Subject = "TicketBAI: documento bloqueado " + referencia;
                 mensaje.Body = string.Format(
@@ -290,6 +291,42 @@ namespace ServicioTicketBai_EPARK
                     referencia, intentos, Environment.NewLine, motivo);
                 smtp.Send(mensaje);
             }
+        }
+
+        private static void ConfigurarSmtp(SmtpClient smtp, MailMessage mensaje)
+        {
+            var ajustes = ConfigurationManager.AppSettings;
+            string servidor = ajustes["TicketBaiSmtpServidor"]?.Trim();
+            if (string.IsNullOrEmpty(servidor))
+            {
+                if (smtp.DeliveryMethod == SmtpDeliveryMethod.Network && string.IsNullOrWhiteSpace(smtp.Host))
+                    throw new ConfigurationErrorsException("Completa TicketBaiSmtpServidor en la configuración del servicio.");
+                return;
+            }
+
+            if (!int.TryParse(ajustes["TicketBaiSmtpPuerto"], out int puerto) || puerto < 1 || puerto > 65535)
+                throw new ConfigurationErrorsException("TicketBaiSmtpPuerto debe estar entre 1 y 65535.");
+
+            string ssl = ajustes["TicketBaiSmtpSsl"] ?? "0";
+            if (ssl != "0" && ssl != "1")
+                throw new ConfigurationErrorsException("TicketBaiSmtpSsl debe valer 0 o 1.");
+
+            string remitente = ajustes["TicketBaiAvisoDe"];
+            if (string.IsNullOrWhiteSpace(remitente))
+                throw new ConfigurationErrorsException("Completa TicketBaiAvisoDe con la dirección remitente.");
+
+            string usuario = ajustes["TicketBaiSmtpUsuario"]?.Trim();
+            string clave = ajustes["TicketBaiSmtpClave"];
+            if (string.IsNullOrEmpty(usuario) != string.IsNullOrEmpty(clave))
+                throw new ConfigurationErrorsException("Configura tanto el usuario como la clave SMTP, o deja ambos campos vacíos.");
+
+            mensaje.From = new MailAddress(remitente);
+            smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
+            smtp.Host = servidor;
+            smtp.Port = puerto;
+            smtp.EnableSsl = ssl == "1";
+            smtp.UseDefaultCredentials = false;
+            smtp.Credentials = string.IsNullOrEmpty(usuario) ? null : new NetworkCredential(usuario, clave);
         }
 
         private FacturaTicketBai ComponerTicketTicketBai(TicketCompleto tc)

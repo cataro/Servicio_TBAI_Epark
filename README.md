@@ -15,6 +15,6 @@ Servicio de Windows en C# (.NET Framework 4.7.2) que prepara y envía tickets, f
 - Completa las URL, el NIF y el token en la configuración local del ejecutable. Los valores del repositorio son de ejemplo. La biblioteca `easy.dll` determina la conexión a SQL Server.
 - Aplica `ServicioTicketBai_EPARK/TicketBai_Intentos.sql` en la base que usa el servicio. El script añade el contador, el último motivo de fallo y el indicador de aviso pendiente.
 - `TicketBaiMaxIntentos` fija el límite de intentos. El valor inicial es 5. Si falla el último intento permitido, el documento pasa a estado 77 y deja de enviarse automáticamente.
-- Configura `TicketBaiAvisoPara` y `system.net/mailSettings` en la configuración local para activar el correo. El aviso incluye el documento y el motivo del fallo. Si SMTP falla, el aviso queda pendiente.
+- Para los avisos, rellena `TicketBaiSmtpServidor`, `TicketBaiSmtpPuerto`, `TicketBaiAvisoDe` y `TicketBaiAvisoPara` en la sección `appSettings` de la configuración local del ejecutable. Usa `TicketBaiSmtpSsl=1` para STARTTLS o `0` sin TLS. Rellena `TicketBaiSmtpUsuario` y `TicketBaiSmtpClave` si el servidor requiere autenticación. El aviso incluye el documento y el motivo del fallo. Si SMTP falla, el aviso queda pendiente.
 
 Gestiona las credenciales y los binarios privados fuera de Git.
